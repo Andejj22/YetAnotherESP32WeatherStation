@@ -14,9 +14,6 @@
 #include <Icons.h>
 #include <config.h>
 
-#define cold2_width  64
-#define cold2_heigth 64
-
 #define OLED_SDA 21
 #define OLED_SCL 22
 
@@ -24,6 +21,9 @@
 #define DHTTYPE DHT22
 
 const int oneWireBus = 4;
+
+/*Replace ssid and password with your network creditentials, or define them 
+in config.h file like I did*/
 
 const char* ssid = MY_SSID;
 const char* password = MY_PASSWORD;
@@ -38,7 +38,10 @@ bool inRange(int val, int min, int max);
 String city = "Helsinki";
 String countryCode = "FI";
 
-int timeStamps = 1; //defines how many 3-hour steps in forecast is requested.
+/*defines how many 3-hour forecasts are requested from API.
+Note that changing this value has effect on displaying forecast*/
+
+int timeStamps = 1; 
 
 String jsonBuffer;
 
@@ -90,7 +93,7 @@ void setup()   {
 void loop() { 
   /* TODO!
 
-  Make timer for API calls! Now they are requested every 10s,
+  Make timer for API calls! Now they are requested every 15s,
   but OpenWeather only updates them every 10 minutes!
   
   */
@@ -156,6 +159,7 @@ String httpGETRequest(const char* serverName){
 }
 
 //Method to display inside temperature
+
 void displayInsideTemp(int isDispInterval){
 
   displayTimer = 0;
@@ -199,6 +203,7 @@ void displayInsideTemp(int isDispInterval){
 }
 
 //Method to display outside temperature
+
 void displayOutsideTemp(int osDispInterval, int tempRequestInterval){
 
   displayTimer = 0;
