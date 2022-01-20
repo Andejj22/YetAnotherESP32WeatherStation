@@ -32,7 +32,9 @@ String apiKey = MY_APIKEY;
 String httpGETRequest(const char* serverName);
 void displayInsideTemp(int isDispInterval);
 void displayOutsideTemp(int osDispInterval, int tempRequestInterval);
-void displayForecast(int forecastInterval, int weatherID);
+void displayFirstForecast(int forecastInterval, int weatherID, const char * time_1);
+void displaySecondForecast(int forecastInterval, int weatherID, const char * time_2);
+void displayThirdForecast(int forecastInterval, int weatherID, const char * time_3);
 bool inRange(int val, int min, int max);
 
 String city = "Helsinki";
@@ -41,7 +43,7 @@ String countryCode = "FI";
 /*defines how many 3-hour forecasts are requested from API.
 Note that changing this value has effect on displaying forecast*/
 
-int timeStamps = 1; 
+int timeStamps = 3; 
 
 String jsonBuffer;
 
@@ -115,19 +117,68 @@ void loop() {
     }else{
       Serial.print("JSON object = ");
       Serial.println(weatherForecast);
-      Serial.println(weatherForecast["list"][0]["weather"][0]["id"]);
-      Serial.println(weatherForecast["list"][0]["dt_txt"]);
 
+      /*to display time of the forecasted weather access to
+      dt_txt variable of JSON is needed. This contains the date and
+      the time but only time is needed. Time is in form HH:MM:SS 
+      but this is too long to be displayed in small oled. That's
+      why it's parsed to HH:MM form*/
+
+      /*pointers to memory where date and time of forecasts
+      are stored*/
+      const char *dateOne = weatherForecast["list"][0]["dt_txt"];
+      const char *dateTwo = weatherForecast["list"][1]["dt_txt"];
+      const char *dateThree = weatherForecast["list"][2]["dt_txt"];
+
+
+      /*each char takes 1 byte of program memory so time + 11 should
+      end up to first element of time part of the dt_txt, as long as
+      openWeather doesn't change api */
+
+      /*pointers to access elements of arrays */
+      const char *p1 = dateOne;
+      const char *p2 = dateTwo;
+      const char *p3 = dateThree;
+
+      /*increasing value of pointer to match memory location
+      of first element of time */
+      p1 += 11; 
+      p2 += 11;
+      p3 += 11;
+
+      /*array to store parsed time. Since this is a C string it needs
+      one extra element for terminating null character*/
+      char time1[6];
+      char time2[6];
+      char time3[6];
+
+      /*parsing array to contain only hours and minutes*/
+      for(int i = 0; i < 5; i++){
+        time1[i] = *p1;
+        time2[i] = *p2;
+        time3[i] = *p3;
+        p1++;
+        p2++;
+        p3++;
+      }
+      time1[5] = '\0';
+      time2[5] = '\0';
+      time3[5] = '\0';
+      Serial.println(time1);
+      Serial.println(time2);
+      Serial.println(time3);
       /*weatherId is unique ID number from API to define weather.
       weatherId is passed as a parameter to function displayForecast
       to determine the weather icon*/
 
-      int weatherId = weatherForecast["list"][0]["weather"][0]["id"]; 
-      displayForecast(5000, weatherId);
+      int weatherId1 = weatherForecast["list"][0]["weather"][0]["id"]; 
+      int weatherId2 = weatherForecast["list"][1]["weather"][0]["id"];
+      int weatherId3 = weatherForecast["list"][2]["weather"][0]["id"];
+      displayFirstForecast(2000, weatherId1, time1);
+      displaySecondForecast(2000, weatherId2, time2);
+      displayThirdForecast(2000, weatherId3, time3);
       
-
-    }
-    
+    }  
   }
 }
 
@@ -168,9 +219,11 @@ void displayInsideTemp(int isDispInterval){
 
       float humidity = dht.readHumidity();
       float temperature = dht.readTemperature();
+      int errorMsgcnt = 0;
 
-      if(isnan(humidity) || isnan(temperature)){
+      if((isnan(humidity) || isnan(temperature)) && (errorMsgcnt < 1)){
         Serial.println("Failed to read from DHT sensor!");
+        errorMsgcnt++;
 
       }else{
         display.clearDisplay();
@@ -237,14 +290,154 @@ void displayOutsideTemp(int osDispInterval, int tempRequestInterval){
   }  
 }
 
-void displayForecast(int forecastInterval, int id){
+void displayFirstForecast(int forecastInterval, int id, const char * time_1){
   displayTimer = 0;
   display.clearDisplay();
   display.setCursor(0,0);
   display.setTextSize(1);
-  display.print("Next 3 hours:");
+  display.print(time_1);
 
-  Serial.println(id);
+  //Serial.println(id);
+
+  /*range 200-299 = thunderstorm class
+    range 300-399 = drizzle class
+    range 500-599 = rain class
+    range 600-699 = snow class
+    range 700-799 = describes atmostphere (fog etc.)
+    value 800 = clear sky
+    range 801-899 = clouds class */
+  while(displayTimer<forecastInterval){
+
+    if(inRange(id,200,299)){ 
+
+      display.drawBitmap(30, 5,  thunderstorm, 64, 64, 1);
+      display.display();
+
+    }
+
+    if(inRange(id,200,299)){ 
+
+      display.drawBitmap(30, 5,  thunderstorm, 64, 64, 1);
+      display.display();
+
+    }
+
+    if(inRange(id,300,501)){ 
+
+      display.drawBitmap(30, 5,  drizzle, 64, 64, 1);
+      display.display();
+
+    }
+
+    if(inRange(id,600,699)){ 
+
+      display.drawBitmap(30, 5,  snow, 64, 64, 1);
+      display.display();
+
+    }
+
+    if(id == 800){ 
+
+      display.drawBitmap(30, 5,  clear_sky, 64, 64, 1);
+      display.display();
+
+    }
+
+    if(id == 801){
+      display.drawBitmap(30, 5, cloud1, 64, 64, 1);
+      display.display();
+    }
+
+    if(id == 802){
+      display.drawBitmap(30, 5, cloud2, 64, 64, 1);
+      display.display();
+    }
+
+    if(id == 803 || id == 804){
+      display.drawBitmap(30, 5, cloud3, 64, 64, 1);
+      display.display();
+    }
+  }
+}
+
+void displaySecondForecast(int forecastInterval, int id, const char * time_2){
+  displayTimer = 0;
+  display.clearDisplay();
+  display.setCursor(0,0);
+  display.setTextSize(1);
+  display.print(time_2);
+
+  //Serial.println(id);
+
+  /*range 200-299 = thunderstorm class
+    range 300-399 = drizzle class
+    range 500-599 = rain class
+    range 600-699 = snow class
+    range 700-799 = describes atmostphere (fog etc.)
+    value 800 = clear sky
+    range 801-899 = clouds class */
+  while(displayTimer<forecastInterval){
+
+    if(inRange(id,200,299)){ 
+
+      display.drawBitmap(30, 5,  thunderstorm, 64, 64, 1);
+      display.display();
+
+    }
+
+    if(inRange(id,200,299)){ 
+
+      display.drawBitmap(30, 5,  thunderstorm, 64, 64, 1);
+      display.display();
+
+    }
+
+    if(inRange(id,300,501)){ 
+
+      display.drawBitmap(30, 5,  drizzle, 64, 64, 1);
+      display.display();
+
+    }
+
+    if(inRange(id,600,699)){ 
+
+      display.drawBitmap(30, 5,  snow, 64, 64, 1);
+      display.display();
+
+    }
+
+    if(id == 800){ 
+
+      display.drawBitmap(30, 5,  clear_sky, 64, 64, 1);
+      display.display();
+
+    }
+
+    if(id == 801){
+      display.drawBitmap(30, 5, cloud1, 64, 64, 1);
+      display.display();
+    }
+
+    if(id == 802){
+      display.drawBitmap(30, 5, cloud2, 64, 64, 1);
+      display.display();
+    }
+
+    if(id == 803 || id == 804){
+      display.drawBitmap(30, 5, cloud3, 64, 64, 1);
+      display.display();
+    }
+  }
+}
+
+void displayThirdForecast(int forecastInterval, int id, const char * time_3){
+  displayTimer = 0;
+  display.clearDisplay();
+  display.setCursor(0,0);
+  display.setTextSize(1);
+  display.print(time_3);
+
+  //Serial.println(id);
 
   /*range 200-299 = thunderstorm class
     range 300-399 = drizzle class
