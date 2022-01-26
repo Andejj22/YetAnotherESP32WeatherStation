@@ -28,13 +28,15 @@ in config.h file like I did*/
 const char* ssid = MY_SSID;
 const char* password = MY_PASSWORD;
 
-String apiKey = MY_APIKEY;
+String weatherApiKey = MY_WEATHER_APIKEY;
+String thingsApiKey = MY_THINGS_APIKEY;
+
 String httpGETRequest(const char* serverName);
-void displayInsideTemp(int isDispInterval);
-void displayOutsideTemp(int osDispInterval, int tempRequestInterval);
-void displayFirstForecast(int forecastInterval, int weatherID, const char * time_1);
-void displaySecondForecast(int forecastInterval, int weatherID, const char * time_2);
-void displayThirdForecast(int forecastInterval, int weatherID, const char * time_3);
+void displayInsideTemp(float insideTemp, float hum);
+void displayOutsideTemp(float outsideTemp);
+void displayFirstForecast(int forecastInterval, int weatherID, const char * time_1, int temperature1);
+void displaySecondForecast(int forecastInterval, int weatherID, const char * time_2, int temperature2);
+void displayThirdForecast(int forecastInterval, int weatherID, const char * time_3, int temperature3);
 bool inRange(int val, int min, int max);
 
 String city = "Helsinki";
@@ -42,18 +44,38 @@ String countryCode = "FI";
 
 /*defines how many 3-hour forecasts are requested from API.
 Note that changing this value has effect on displaying forecast*/
-
 int timeStamps = 3; 
+
+/*intervals for timers. Updateinterval defines in which interval sensor
+readings are updated to ThingsSpeak, dhtInterval rate of dht measurements
+and dallasTempInterval rate of DS18B20 measurements. Loop takes 17s to get
+to update sequence so any interval under that is good as nothing*/
+int updateInterval = 600000; //10 minutes
+int dhtInterval = 2000; 
+int dallasTempInterval = 1000;
+
+/*variables to hold counters for measurements done in loop, total counts of
+inside temp and humidity and outside temp measured between updating data to cloud*/
+int measurementCnt = 0, insideTotalCnt = 0, outsideTotalCnt = 0;
+
+/*variables to hold temporary data and data to send*/
+float outsideTempSum = 0, insideTempSum = 0, humiditySum = 0,
+      outsideTempSend, insideTempSend, humiditySend;
 
 String jsonBuffer;
 
+/*creating instances of sensors and timers*/
 OneWire oneWire(oneWireBus);
 DallasTemperature outTempSens(&oneWire);
+DHT dht(DHTPIN, DHTTYPE); //init DHT22 sensor
 elapsedMillis displayTimer; //timer for each diplay item
-elapsedMillis tempTimer; //timer for each temp request from DS18B20
+elapsedMillis measurementTimer; //timer for each temp request from DS18B20
+elapsedMillis updateSensorsTime; //Timer for HTTP POST requests
+
+HTTPClient http;
 
 Adafruit_SH1106 display(OLED_SDA, OLED_SCL); //construct a display object
-DHT dht(DHTPIN, DHTTYPE); //init DHT22 sensor
+
 
 void setup()   {                
   Serial.begin(115200);
@@ -67,7 +89,7 @@ void setup()   {
 
   dht.begin();
   outTempSens.begin();
-  outTempSens.setResolution(12);
+  outTempSens.setResolution(12); //Setting outside temperature to use 12bit resolution. 
 
   WiFi.begin(ssid, password);
   Serial.print("Connecting...");
@@ -99,15 +121,58 @@ void loop() {
   but OpenWeather only updates them every 10 minutes!
   
   */
-  
-  displayInsideTemp(5000);
-  displayOutsideTemp(5000, 1000);
-  
+  measurementTimer = 0;
+
+  /* This loop is used to measure inside temp and humidity 3 times
+  between 2 second intervals and display them. DHT22 updates sensor 
+  values every 2 seconds so requesting values more often would be useless*/
+
+  while(measurementCnt<3){
+
+    if(measurementTimer > dhtInterval){
+      float humidity = dht.readHumidity();
+      float temperature = dht.readTemperature();
+      measurementCnt++;
+      measurementTimer = 0; 
+      insideTempSum += temperature;
+      humiditySum += humidity;
+      insideTotalCnt++;
+      displayInsideTemp(temperature, humidity);
+
+      if(isnan(humidity) || isnan(temperature)){
+        Serial.println("Failed to read from DHT sensor!");
+      }  
+    }
+  }
+  measurementCnt = 0;
+
+  /*This loop is used to measure outside temp 5 times with 1s intervals
+  DS18B20 is capable of doing so with 12bit resolution*/
+
+  while(measurementCnt < 5){
+
+    if(measurementTimer > dallasTempInterval){
+      outTempSens.requestTemperatures();
+      float outsideTemp = outTempSens.getTempCByIndex(0);
+      displayOutsideTemp(outsideTemp);
+      measurementCnt++;
+      measurementTimer = 0;
+      outsideTempSum += outsideTemp;
+      outsideTotalCnt++;
+    }
+
+  }
+
+  measurementCnt = 0;
+
 
   if(WiFi.status() == WL_CONNECTED){
-    String serverPath = "http://api.openweathermap.org/data/2.5/forecast?q=" + city + "," + countryCode + "&cnt="+ timeStamps + "&APPID=" + apiKey;
 
-    jsonBuffer = httpGETRequest(serverPath.c_str());
+
+    String weatherServerPath = "http://api.openweathermap.org/data/2.5/forecast?q=" + city + "," + countryCode 
+                        + "&cnt="+ timeStamps + "&APPID=" + weatherApiKey;
+
+    jsonBuffer = httpGETRequest(weatherServerPath.c_str());
 
     JSONVar weatherForecast = JSON.parse(jsonBuffer);
 
@@ -131,17 +196,17 @@ void loop() {
       const char *dateThree = weatherForecast["list"][2]["dt_txt"];
 
 
-      /*each char takes 1 byte of program memory so time + 11 should
-      end up to first element of time part of the dt_txt, as long as
-      openWeather doesn't change api */
 
       /*pointers to access elements of arrays */
       const char *p1 = dateOne;
       const char *p2 = dateTwo;
       const char *p3 = dateThree;
 
-      /*increasing value of pointer to match memory location
-      of first element of time */
+      
+      /*each char takes 1 byte of program memory so time + 11 should
+      end up to first element of time part of the dt_txt, as long as
+      openWeather doesn't change api. Increasing value of pointer to match 
+      memory location of first element of time */
       p1 += 11; 
       p2 += 11;
       p3 += 11;
@@ -164,9 +229,7 @@ void loop() {
       time1[5] = '\0';
       time2[5] = '\0';
       time3[5] = '\0';
-      Serial.println(time1);
-      Serial.println(time2);
-      Serial.println(time3);
+
       /*weatherId is unique ID number from API to define weather.
       weatherId is passed as a parameter to function displayForecast
       to determine the weather icon*/
@@ -174,10 +237,38 @@ void loop() {
       int weatherId1 = weatherForecast["list"][0]["weather"][0]["id"]; 
       int weatherId2 = weatherForecast["list"][1]["weather"][0]["id"];
       int weatherId3 = weatherForecast["list"][2]["weather"][0]["id"];
-      displayFirstForecast(2000, weatherId1, time1);
-      displaySecondForecast(2000, weatherId2, time2);
-      displayThirdForecast(2000, weatherId3, time3);
+
+      int forecastTemp1 = weatherForecast["list"][0]["main"]["temp"];
+      int forecastTemp2 = weatherForecast["list"][1]["main"]["temp"];
+      int forecastTemp3 = weatherForecast["list"][2]["main"]["temp"];
+
+      forecastTemp1 -= 273;
+      forecastTemp2 -= 273;
+      forecastTemp3 -= 273;
+
+    
+      displayFirstForecast(2000, weatherId1, time1, forecastTemp1);
+      displaySecondForecast(2000, weatherId2, time2, forecastTemp2);
+      displayThirdForecast(1000, weatherId3, time3, forecastTemp3); //third forecast is already displayed for 2s because of measurementTimer
       
+    }
+
+    if(updateSensorsTime > updateInterval){
+
+      humiditySend = humiditySum/insideTotalCnt;
+      insideTempSend = insideTempSum/insideTotalCnt;
+      outsideTempSend = outsideTempSum/outsideTotalCnt;
+      
+
+      String thingsServerPath = "http://api.thingspeak.com/update?api_key=" + thingsApiKey + "&field1=" + outsideTempSend
+                              + "&field2=" + insideTempSend + "&field3=" + humiditySend;
+      httpGETRequest(thingsServerPath.c_str());
+      updateSensorsTime = 0;
+      outsideTempSum = 0;
+      insideTempSum = 0;
+      humiditySum = 0;
+      insideTotalCnt = 0;
+      outsideTotalCnt = 0;
     }  
   }
 }
@@ -186,21 +277,19 @@ void loop() {
 
 String httpGETRequest(const char* serverName){ 
   
-  HTTPClient http;
-
   http.begin(serverName);
 
-  int httpResponseCode = http.GET();
+  int httpWeatherResponseCode = http.GET();
 
   String payload = "{}";
 
-  if (httpResponseCode>0){
+  if (httpWeatherResponseCode>0){
     Serial.print("HTTP Response code: ");
-    Serial.print(httpResponseCode);
+    Serial.print(httpWeatherResponseCode);
     payload = http.getString();
   }else{
     Serial.print("Error code:");
-    Serial.print(httpResponseCode);
+    Serial.print(httpWeatherResponseCode);
   }
 
   http.end();
@@ -209,93 +298,77 @@ String httpGETRequest(const char* serverName){
 
 }
 
+
 //Method to display inside temperature
 
-void displayInsideTemp(int isDispInterval){
+void displayInsideTemp(float insideTemp, float hum){
 
-  displayTimer = 0;
+    display.clearDisplay();
+     // display temperature
+    display.drawBitmap(0,0,  temperature_icon, temperature_width, temperature_height, 1);
+    display.setTextSize(1);
+    display.setCursor(24,22);
+    display.print("in");
+    display.setTextSize(2);
+    display.setCursor(32,0);
+    display.print(insideTemp);
+    display.print(" ");
+    display.setTextSize(1);
+    display.cp437(true);
+    display.write(167);
+    display.setTextSize(2);
+    display.print("C");
 
-  while(displayTimer < isDispInterval){
-
-      float humidity = dht.readHumidity();
-      float temperature = dht.readTemperature();
-      int errorMsgcnt = 0;
-
-      if((isnan(humidity) || isnan(temperature)) && (errorMsgcnt < 1)){
-        Serial.println("Failed to read from DHT sensor!");
-        errorMsgcnt++;
-
-      }else{
-        display.clearDisplay();
-          // display temperature
-        display.drawBitmap(0,0,  temperature_icon, temperature_width, temperature_height, 1);
-        display.setTextSize(1);
-        display.setCursor(24,22);
-        display.print("in");
-        display.setTextSize(2);
-        display.setCursor(32,0);
-        display.print(temperature);
-        display.print(" ");
-        display.setTextSize(1);
-        display.cp437(true);
-        display.write(167);
-        display.setTextSize(2);
-        display.print("C");
-
-          // display humidity
-        display.drawBitmap(0,32, humidity_icon, humidity_width, humidity_height, 1);
-        display.setTextSize(2);
-        display.setCursor(32,45);
-        display.print(humidity);
-        display.print(" %"); 
+    // display humidity
+    display.drawBitmap(0,32, humidity_icon, humidity_width, humidity_height, 1);
+    display.setTextSize(2);
+    display.setCursor(32,45);
+    display.print(hum);
+    display.print(" %"); 
            
-        display.display(); 
-
-    }
+    display.display();         
+   
   }
-}
 
 //Method to display outside temperature
 
-void displayOutsideTemp(int osDispInterval, int tempRequestInterval){
+void displayOutsideTemp(float outsideTemp){
 
-  displayTimer = 0;
+  display.clearDisplay();
+    // display temperature
+  display.drawBitmap(0,0,  temperature_icon, temperature_width, temperature_height, 1);
+  display.setTextSize(1);
+  display.setCursor(24,22);
+  display.print("out");
+  display.setTextSize(2);
+  display.setCursor(32,0);
+  display.print(outsideTemp);
+  display.print(" ");
+  display.setTextSize(1);
+  display.cp437(true);
+  display.write(167);
+  display.setTextSize(2);
+  display.print("C");
+  display.display();      
 
-  while(displayTimer < osDispInterval){
+ }
+  
+  
 
-    if(tempTimer > tempRequestInterval){
 
-      tempTimer = 0;
-      outTempSens.requestTemperatures();
-      float outSideTemp = outTempSens.getTempCByIndex(0);
-        display.clearDisplay();
-          // display temperature
-        display.drawBitmap(0,0,  temperature_icon, temperature_width, temperature_height, 1);
-        display.setTextSize(1);
-        display.setCursor(24,22);
-        display.print("out");
-        display.setTextSize(2);
-        display.setCursor(32,0);
-        display.print(outSideTemp);
-        display.print(" ");
-        display.setTextSize(1);
-        display.cp437(true);
-        display.write(167);
-        display.setTextSize(2);
-        display.print("C");
-
-        display.display();
-
-    }
-  }  
-}
-
-void displayFirstForecast(int forecastInterval, int id, const char * time_1){
+void displayFirstForecast(int forecastInterval, int id, const char * time_1, int temperature1){
   displayTimer = 0;
   display.clearDisplay();
   display.setCursor(0,0);
   display.setTextSize(1);
   display.print(time_1);
+  display.setCursor(90,50);
+  display.print(temperature1);
+  display.print(" ");
+  display.cp437(true);
+  display.write(167);
+  display.print("C");
+
 
   //Serial.println(id);
 
@@ -360,22 +433,19 @@ void displayFirstForecast(int forecastInterval, int id, const char * time_1){
   }
 }
 
-void displaySecondForecast(int forecastInterval, int id, const char * time_2){
+void displaySecondForecast(int forecastInterval, int id, const char * time_2, int temperature2){
   displayTimer = 0;
   display.clearDisplay();
   display.setCursor(0,0);
   display.setTextSize(1);
   display.print(time_2);
+  display.setCursor(90,50);
+  display.print(temperature2);
+  display.print(" ");
+  display.cp437(true);
+  display.write(167);
+  display.print("C");
 
-  //Serial.println(id);
-
-  /*range 200-299 = thunderstorm class
-    range 300-399 = drizzle class
-    range 500-599 = rain class
-    range 600-699 = snow class
-    range 700-799 = describes atmostphere (fog etc.)
-    value 800 = clear sky
-    range 801-899 = clouds class */
   while(displayTimer<forecastInterval){
 
     if(inRange(id,200,299)){ 
@@ -430,22 +500,19 @@ void displaySecondForecast(int forecastInterval, int id, const char * time_2){
   }
 }
 
-void displayThirdForecast(int forecastInterval, int id, const char * time_3){
+void displayThirdForecast(int forecastInterval, int id, const char * time_3, int temperature3){
   displayTimer = 0;
   display.clearDisplay();
   display.setCursor(0,0);
   display.setTextSize(1);
   display.print(time_3);
+  display.setCursor(90,50);
+  display.print(temperature3);
+  display.print(" ");
+  display.cp437(true);
+  display.write(167);
+  display.print("C");
 
-  //Serial.println(id);
-
-  /*range 200-299 = thunderstorm class
-    range 300-399 = drizzle class
-    range 500-599 = rain class
-    range 600-699 = snow class
-    range 700-799 = describes atmostphere (fog etc.)
-    value 800 = clear sky
-    range 801-899 = clouds class */
   while(displayTimer<forecastInterval){
 
     if(inRange(id,200,299)){ 
