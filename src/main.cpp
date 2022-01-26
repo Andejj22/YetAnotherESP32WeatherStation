@@ -49,7 +49,8 @@ int timeStamps = 3;
 /*intervals for timers. Updateinterval defines in which interval sensor
 readings are updated to ThingsSpeak, dhtInterval rate of dht measurements
 and dallasTempInterval rate of DS18B20 measurements. Loop takes 17s to get
-to update sequence so any interval under that is good as nothing*/
+to update sequence so any interval under that is good as nothing. Also ThingsSpeak
+doesn't allow more than 1 request /15s anyways for free subscription*/
 int updateInterval = 600000; //10 minutes
 int dhtInterval = 2000; 
 int dallasTempInterval = 1000;
